@@ -1,0 +1,29 @@
+[Unit]
+Description=Liberty Site Staging
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/deploy/LIBERTY-SITE-STAGING
+ExecStart=/bin/bash -c 'source $HOME/.nvm/nvm.sh && node build'
+Restart=always
+RestartSec=10
+
+# Environment variables
+Environment="NODE_ENV=staging"
+Environment="PORT=4173"
+Environment="HOST=127.0.0.1"
+Environment="ORIGIN=https://staging.republicreach.org"
+EnvironmentFile=/home/deploy/.env.staging
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=liberty-staging
+
+[Install]
+WantedBy=default.target

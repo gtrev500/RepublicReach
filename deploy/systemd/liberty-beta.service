@@ -1,0 +1,29 @@
+[Unit]
+Description=Liberty Site Beta (Production)
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/deploy/LIBERTY-SITE
+ExecStart=/bin/bash -c 'source $HOME/.nvm/nvm.sh && node build'
+Restart=always
+RestartSec=10
+
+# Environment variables
+Environment="NODE_ENV=production"
+Environment="PORT=3000"
+Environment="HOST=127.0.0.1"
+Environment="ORIGIN=https://beta.republicreach.org"
+EnvironmentFile=/home/deploy/.env.production
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=liberty-beta
+
+[Install]
+WantedBy=default.target
