@@ -1,0 +1,147 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main        # Deploy to staging on main push
+      - production  # Deploy to production on production push
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Run linting
+      run: npm run lint
+    
+    - name: Run type checking
+      run: npm run check
+      env:
+        DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://localhost/test' }}
+    
+    - name: Build application
+      run: npm run build
+      env:
+        DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://localhost/test' }}
+
+  deploy-staging:
+    needs: build-and-lint
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Deploy to Staging
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SERVER_SSH_KEY }}
+        port: ${{ secrets.SERVER_PORT }}
+        script: |
+          # Load nvm and Node.js
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          
+          cd /home/deploy/LIBERTY-SITE-STAGING
+          git pull origin main
+          
+          # Install all dependencies (including devDependencies needed for build)
+          npm ci
+          
+          # Backup current deployment
+          if [ -d "build" ]; then
+            echo "Creating backup of current build..."
+            cp -r build build.backup.$(date +%Y%m%d_%H%M%S)
+            echo "Backup created successfully"
+          else
+            echo "No existing build directory found, skipping backup"
+          fi
+          
+          # Build with staging database
+          # Load DATABASE_URL from local .env.staging file
+          set -a
+          source /home/deploy/.env.staging
+          set +a
+          npm run build
+          
+          # Remove dev dependencies after build (optional, for security)
+          npm prune --production
+          
+          # Restart staging service
+          systemctl --user restart liberty-staging
+          
+          # Health check
+          sleep 5
+          curl -f http://localhost:4173/api/representatives?state=CA&district=19 || exit 1
+
+  deploy-production:
+    needs: build-and-lint
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/production'
+    environment: production
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Deploy to Production
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SERVER_SSH_KEY }}
+        port: ${{ secrets.SERVER_PORT }}
+        script: |
+          # Load nvm and Node.js
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          
+          cd /home/deploy/LIBERTY-SITE
+          git pull origin production
+          
+          # Install all dependencies (including devDependencies needed for build)
+          npm ci
+          
+          # Backup current deployment
+          if [ -d "build" ]; then
+            echo "Creating backup of current build..."
+            cp -r build build.backup.$(date +%Y%m%d_%H%M%S)
+            echo "Backup created successfully"
+          else
+            echo "No existing build directory found, skipping backup"
+          fi
+          
+          # Build with production database
+          # Load DATABASE_URL from local .env.production file
+          set -a
+          source /home/deploy/.env.production
+          set +a
+          npm run build
+          
+          # Remove dev dependencies after build (optional, for security)
+          npm prune --production
+          
+          # Restart production service
+          systemctl --user restart liberty-beta
+          
+          # Health check
+          sleep 5
+          curl -f http://localhost:3000/api/representatives?state=CA&district=19 || exit 1
+          
+          # Keep last 5 backups
+          ls -t build.backup.* | tail -n +6 | xargs rm -rf || true

@@ -124,9 +124,102 @@ Modern SvelteKit application serving the unified data:
 
 ### Deployment Infrastructure
 - **Multi-environment**: Separate beta, staging, and production deployments
-- **SSL/TLS**: Automated certificate management
-- **Monitoring**: Application and data freshness tracking
-- **Backups**: Automated PostgreSQL backup strategy
+- **SSL/TLS**: Automated certificate management with Let's Encrypt
+- **Monitoring**: Application health checks and data freshness tracking
+- **Backups**: Automated PostgreSQL backup strategy with point-in-time recovery
+
+## CI/CD Pipeline
+
+### Automated Deployment Flow
+
+```mermaid
+graph LR
+    A[Local Development] -->|git push| B[GitHub]
+    B -->|main branch| C[Build & Test]
+    C -->|Success| D[Deploy to Staging]
+    B -->|production branch| E[Build & Test]
+    E -->|Success + Approval| F[Deploy to Production]
+    D -->|Health Check| G[staging.republicreach.org]
+    F -->|Health Check| H[beta.republicreach.org]
+```
+
+### GitHub Actions Workflow
+
+The deployment pipeline automates the entire build and deployment process:
+
+1. **Build & Test Phase**
+   - Linting with ESLint
+   - Type checking with TypeScript
+   - Unit test execution
+   - Production build verification
+
+2. **Staging Deployment** (on `main` push)
+   - SSH-based deployment to staging server
+   - Zero-downtime deployment with build backups
+   - Automated health checks
+   - Database connection from `.env.staging`
+
+3. **Production Deployment** (on `production` push)
+   - Manual approval required
+   - Blue-green deployment strategy
+   - Automatic rollback capability
+   - Retention of last 5 build backups
+
+### Infrastructure Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    GitHub Actions Runner                     │
+│                                                              │
+│  Build → Test → Deploy → Health Check → Notification       │
+└────────────────────┬────────────────────────────────────────┘
+                     │ SSH
+┌────────────────────▼────────────────────────────────────────┐
+│                    Hetzner VPS Server                        │
+│                                                              │
+│  ┌─────────────────────────┐  ┌─────────────────────────┐  │
+│  │   systemd Services       │  │   nginx Reverse Proxy   │  │
+│  │                         │  │                         │  │
+│  │  liberty-staging :4173  │  │  staging.domain → 4173  │  │
+│  │  liberty-beta    :3000  │  │  beta.domain    → 3000  │  │
+│  │  martin         :3100  │  │  tiles.domain   → 3100  │  │
+│  └─────────────────────────┘  └─────────────────────────┘  │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │              PostgreSQL 16 + PostGIS                 │   │
+│  │                                                      │   │
+│  │  Production DB │ Staging DB │ Automated Backups    │   │
+│  └─────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Environment Management
+
+| Environment | Branch | URL | Database | Purpose |
+|-------------|--------|-----|----------|---------|
+| Production | `production` | beta.republicreach.org | `gov` | Live users |
+| Staging | `main` | staging.republicreach.org | `gov_staging` | Testing |
+| Development | feature/* | localhost:5173 | `gov_local` | Development |
+
+### Security & Monitoring
+
+1. **Security Measures**
+   - SSH key-based deployment (no passwords)
+   - Environment variables for sensitive data
+   - Firewall rules restricting access
+   - SSL/TLS on all public endpoints
+
+2. **Health Monitoring**
+   - Automated health checks post-deployment
+   - systemd service status monitoring
+   - nginx access and error logs
+   - Database connection pooling metrics
+
+3. **Backup Strategy**
+   - Automated daily PostgreSQL backups
+   - Build artifact retention (last 5 versions)
+   - Database replication to staging
+   - Point-in-time recovery capability
 
 ## Installation
 

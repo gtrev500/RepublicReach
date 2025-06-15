@@ -238,32 +238,93 @@ https://tiles.republicreach.org/{z}/{x}/{y}.pbf
 
 ### Environment Setup
 
-1. **Production** (republicreach.org)
-   - Full dataset, daily updates
+1. **Production** (beta.republicreach.org)
+   - Branch: `production`
+   - Database: `gov`
+   - Port: 3000
+   - Full dataset with daily ETL updates
    - nginx caching: 1 hour
-   - SSL with auto-renewal
+   - SSL with Let's Encrypt auto-renewal
 
-2. **Beta** (beta.republicreach.org)
-   - Feature testing environment
-   - Same data as production
-   - Shorter cache TTL
-
-3. **Staging** (staging.republicreach.org)
+2. **Staging** (staging.republicreach.org)
+   - Branch: `main`
+   - Database: `gov_staging`
+   - Port: 4173
    - Pre-production validation
-   - Separate database
-   - CI/CD integration
+   - Database synced from production
+   - CI/CD automatic deployment
+
+3. **Development** (localhost)
+   - Branch: feature branches
+   - Database: `gov_local`
+   - Port: 5173
+   - Local PostgreSQL instance
+
+### CI/CD Pipeline (GitHub Actions)
+
+The `.github/workflows/deploy.yml` orchestrates the deployment:
+
+#### Build & Test Job
+```yaml
+- Checkout code
+- Setup Node.js 22 with npm cache
+- Install dependencies (npm ci)
+- Run linting (npm run lint)
+- Run type checking (npm run check)
+- Build application (npm run build)
+```
+
+#### Staging Deployment (Auto on main push)
+```yaml
+- SSH to server as deploy user
+- Pull latest main branch
+- Install dependencies
+- Backup current build
+- Build with staging environment
+- Restart liberty-staging service
+- Health check on localhost:4173
+```
+
+#### Production Deployment (Manual approval required)
+```yaml
+- Same as staging but:
+- Requires environment approval
+- Deploys to LIBERTY-SITE directory
+- Restarts liberty-beta service
+- Health check on localhost:3000
+- Maintains last 5 build backups
+```
 
 ### Service Management
 
 ```bash
-# systemd services
-systemctl status republicreach-etl    # ETL orchestrator
-systemctl status republicreach-web    # SvelteKit application
-systemctl status martin               # Tile server
+# systemd services (user-level)
+systemctl --user status liberty-beta      # Production (port 3000)
+systemctl --user status liberty-staging   # Staging (port 4173)
+systemctl --user status martin            # Tile server (port 3100)
 
-# Cron jobs
-0 2 * * * /home/deploy/etl/run_daily_update.sh
+# ETL orchestration
+cd /home/deploy/etl && python -m orchestrator
+
+# View logs
+journalctl --user -u liberty-beta -f
+journalctl --user -u liberty-staging -f
 ```
+
+### nginx Configuration
+
+Sites enabled:
+- `republicreach.org.conf` - Production redirect
+- `beta.republicreach.org.conf` - Production app
+- `staging.republicreach.org.conf` - Staging app
+- `tiles.republicreach.org.conf` - Martin tile server
+
+Key nginx features:
+- Reverse proxy to Node.js services
+- Gzip compression
+- Cache headers for static assets
+- SSL termination
+- Health check endpoints
 
 ## Development Workflow
 
@@ -299,6 +360,38 @@ npm run build
 
 ## Common Tasks
 
+### Deployment Tasks
+
+#### Manual Deployment to Staging
+```bash
+cd /home/deploy/LIBERTY-SITE-STAGING
+git pull origin main
+npm ci
+npm run build
+systemctl --user restart liberty-staging
+```
+
+#### Database Sync (Production → Staging)
+```bash
+# Dump production database
+pg_dump gov > /tmp/gov_prod.sql
+
+# Restore to staging
+dropdb gov_staging && createdb gov_staging
+psql gov_staging < /tmp/gov_prod.sql
+```
+
+#### Rollback Procedure
+```bash
+cd /home/deploy/LIBERTY-SITE
+# Find backup
+ls -la build.backup.*
+# Restore previous build
+mv build build.failed
+mv build.backup.20250615_120000 build
+systemctl --user restart liberty-beta
+```
+
 ### Adding a New Data Source
 
 1. Create pipeline in `etl/pipelines/`
@@ -314,8 +407,20 @@ npm run build
 3. Update Martin configuration
 4. Clear tile cache
 
-### Debugging Data Issues
+### Debugging Issues
 
+#### Check Service Status
+```bash
+# Application logs
+journalctl --user -u liberty-beta -n 100
+journalctl --user -u liberty-staging -n 100
+
+# nginx logs
+sudo tail -f /var/log/nginx/error.log
+sudo tail -f /var/log/nginx/access.log
+```
+
+#### Database Queries
 ```sql
 -- Check pipeline status
 SELECT * FROM etl_runs 
@@ -328,6 +433,19 @@ SELECT MAX(update_date) FROM members;
 -- District lookup issues
 SELECT * FROM congressional_districts
 WHERE ST_Contains(boundary, ST_SetSRID(ST_MakePoint(lng, lat), 4326));
+```
+
+#### Health Checks
+```bash
+# Production
+curl https://beta.republicreach.org/api/state-info
+curl https://beta.republicreach.org/api/representatives?state=CA&district=1
+
+# Staging
+curl https://staging.republicreach.org/api/state-info
+
+# Tile server
+curl https://tiles.republicreach.org/14/2621/6333.pbf -I
 ```
 
 ## Performance Optimization
@@ -355,18 +473,93 @@ CREATE INDEX idx_members_api_data ON members USING GIN(api_data);
 
 ## Security Considerations
 
-- API keys stored in environment variables
-- Database credentials in systemd environment files
-- No PII beyond public congressional data
-- Rate limiting on all endpoints
-- SQL injection prevention via SQLAlchemy
+### Access Control
+- SSH key-based authentication only (password auth disabled)
+- Deployment user (`deploy`) with limited sudo access
+- Database user with minimal required permissions
+- Firewall rules (ufw) restricting ports
+
+### Secrets Management
+```bash
+# Production secrets
+/home/deploy/.env.production    # Mode: 600
+/home/deploy/.env.staging       # Mode: 600
+
+# GitHub Actions secrets
+SERVER_HOST                     # Server IP
+SERVER_USER                     # deploy
+SERVER_PORT                     # SSH port
+SERVER_SSH_KEY                  # ED25519 private key
+```
+
+### Application Security
+- Environment variables for sensitive data
+- No hardcoded credentials in code
+- SQL injection prevention via SQLAlchemy ORM
+- XSS protection with SvelteKit's built-in escaping
+- CORS configuration for API endpoints
+- Rate limiting on nginx level
+
+## Backup & Recovery
+
+### Database Backups
+```bash
+# Daily automated backup (cron)
+0 3 * * * pg_dump gov | gzip > /home/deploy/db-backups/gov_$(date +\%Y\%m\%d).sql.gz
+
+# Manual backup
+pg_dump gov > /home/deploy/backups/gov_manual_$(date +%Y%m%d_%H%M%S).sql
+
+# Restore from backup
+gunzip < /home/deploy/db-backups/gov_20250615.sql.gz | psql gov_restore
+```
+
+### Application Backups
+- Build artifacts: Last 5 versions retained automatically
+- Configuration: Version controlled in git
+- nginx configs: Backed up in `/home/deploy/backups/nginx/`
+
+### Disaster Recovery Plan
+1. **Database failure**: Restore from daily backup (max 24h data loss)
+2. **Application failure**: Rollback to previous build
+3. **Server failure**: Provision new VPS, restore from backups
+4. **Data corruption**: ETL pipelines can rebuild from source
 
 ## Monitoring and Alerts
 
-- Pipeline failures logged to `/home/deploy/etl/logs/`
-- nginx access logs for traffic analysis
-- Database slow query logging enabled
-- Disk space monitoring for bulk data downloads
+### Application Monitoring
+- Health endpoints checked post-deployment
+- systemd service status monitoring
+- nginx access/error logs
+- Database connection pool metrics
+
+### Log Locations
+```bash
+# Application logs
+/home/deploy/.pm2/logs/          # If using PM2
+journalctl --user -u liberty-*   # systemd logs
+
+# ETL logs
+/home/deploy/etl/logs/
+/home/deploy/etl/etl_runs.log
+
+# System logs
+/var/log/nginx/access.log
+/var/log/nginx/error.log
+/var/log/postgresql/
+```
+
+### Performance Monitoring
+```bash
+# Server resources
+htop                            # CPU/Memory usage
+df -h                          # Disk usage
+netstat -tlpn                  # Network connections
+
+# Database performance
+psql gov -c "SELECT * FROM pg_stat_activity"
+psql gov -c "SELECT * FROM pg_stat_user_tables"
+```
 
 ## Future Architecture Considerations
 
