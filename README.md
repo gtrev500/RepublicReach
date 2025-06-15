@@ -88,7 +88,11 @@ RepublicReach transforms diverse government data sources—APIs, XML feeds, and 
 - **Tailwind CSS v4**: Utility-first styling
 
 ### Infrastructure
-- **nginx**: Reverse proxy with caching
+- **nginx**: Reverse proxy with SSL termination and caching
+  - Production: beta.republicreach.org → localhost:3000
+  - Staging: staging.republicreach.org → localhost:4173 (IP restricted)
+  - Tile Server: tiles.republicreach.org → localhost:2999 (CORS enabled)
+  - Main domain: republicreach.org → redirects to beta
 - **systemd**: Service orchestration with user-level services
 - **Martin**: Vector tile server for map data (hot swapped from pgtileserv)
 - **Ubuntu Server**: Production environment
@@ -225,13 +229,21 @@ The deployment pipeline automates the entire build and deployment process:
 
 ### Deployment Infrastructure
 
-The `deploy/` directory contains production deployment configuration:
+The repository includes complete deployment configuration:
 
+#### `deploy/` - Service Configuration
 - **systemd/**: Service definitions for production and staging environments
 - **scripts/**: Deployment automation and validation tools
   - `check-env.sh`: Comprehensive deployment readiness checks
   - `db-sync-safe.sh`: Safe database synchronization between environments
 - **Setup Documentation**: Step-by-step setup and CI/CD configuration guides
+
+#### `nginx/` - Web Server Configuration
+- **SSL/TLS**: All sites use HTTPS with Let's Encrypt certificates
+- **Reverse Proxy**: Routes traffic to appropriate Node.js services
+- **Security**: IP restriction for staging environment
+- **Performance**: Aggressive caching for tile server (1 hour TTL)
+- **CORS**: Configured for tile server to support all subdomains
 
 ## Installation
 

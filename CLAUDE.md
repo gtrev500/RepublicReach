@@ -340,18 +340,51 @@ cd /home/deploy/etl && python -m orchestrator
 
 ### nginx Configuration
 
-Sites enabled:
-- `republicreach.org.conf` - Production redirect
-- `beta.republicreach.org.conf` - Production app
-- `staging.republicreach.org.conf` - Staging app
-- `tiles.republicreach.org.conf` - Martin tile server
+The `nginx/` directory contains production web server configurations:
 
-Key nginx features:
-- Reverse proxy to Node.js services
-- Gzip compression
+#### Domain Configuration
+
+**beta.republicreach.org.conf** (Production Application)
+```nginx
+- HTTP → HTTPS redirect
+- Proxy to localhost:3000
+- SSL with TLSv1.2/1.3
+- Headers: X-Real-IP, X-Forwarded-Proto, X-Forwarded-For
+```
+
+**staging.republicreach.org.conf** (Staging Environment)
+```nginx
+- IP restriction (allow/deny directives)
+- HTTP → HTTPS redirect
+- Proxy to localhost:4173
+- Same SSL configuration as production
+```
+
+**tiles.republicreach.org.conf** (Map Tile Server)
+```nginx
+- Proxy to localhost:2999 (Martin)
+- Aggressive caching: max-age=3600
+- CORS for *.republicreach.org subdomains
+- Optimized for high-volume tile requests
+```
+
+**republicreach.org.conf** (Main Domain)
+```nginx
+- Redirects www and non-www to beta.republicreach.org
+- Temporary 302 redirect (can be changed to 301)
+```
+
+#### Security Features
+- SSL certificates: /etc/nginx/ssl/republicreach/
+- Session cache: shared:SSL:10m
+- Server cipher preference enabled
+- IP-based access control for staging
+
+#### Performance Optimizations
+- HTTP/2 enabled on all HTTPS sites
+- Proxy buffering for backend responses
 - Cache headers for static assets
-- SSL termination
-- Health check endpoints
+- Dedicated tile server with caching
 
 ## Development Workflow
 
@@ -494,6 +527,24 @@ curl https://staging.republicreach.org/api/state-info
 
 # Tile server
 curl https://tiles.republicreach.org/14/2621/6333.pbf -I
+```
+
+#### nginx Management
+```bash
+# Test configuration
+sudo nginx -t
+
+# Reload configuration (zero downtime)
+sudo nginx -s reload
+
+# View access logs
+sudo tail -f /var/log/nginx/access.log
+
+# View error logs
+sudo tail -f /var/log/nginx/error.log
+
+# Check SSL certificate expiry
+sudo certbot certificates
 ```
 
 ## Performance Optimization
