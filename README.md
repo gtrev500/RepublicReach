@@ -89,10 +89,11 @@ RepublicReach transforms diverse government data sources—APIs, XML feeds, and 
 
 ### Infrastructure
 - **nginx**: Reverse proxy with caching
-- **systemd**: Service orchestration
+- **systemd**: Service orchestration with user-level services
 - **Martin**: Vector tile server for map data (hot swapped from pgtileserv)
 - **Ubuntu Server**: Production environment
 - **Server**: Hetzner VPS with Firewall
+- **Deployment Tools**: Automated scripts for environment validation and database sync
 
 ## Data Sources
 
@@ -214,12 +215,23 @@ The deployment pipeline automates the entire build and deployment process:
    - systemd service status monitoring
    - nginx access and error logs
    - Database connection pooling metrics
+   - Deployment readiness validation (`deploy/scripts/check-env.sh`)
 
 3. **Backup Strategy**
    - Automated daily PostgreSQL backups
    - Build artifact retention (last 5 versions)
-   - Database replication to staging
+   - Safe database synchronization (`deploy/scripts/db-sync-safe.sh`)
    - Point-in-time recovery capability
+
+### Deployment Infrastructure
+
+The `deploy/` directory contains production deployment configuration:
+
+- **systemd/**: Service definitions for production and staging environments
+- **scripts/**: Deployment automation and validation tools
+  - `check-env.sh`: Comprehensive deployment readiness checks
+  - `db-sync-safe.sh`: Safe database synchronization between environments
+- **Setup Documentation**: Step-by-step setup and CI/CD configuration guides
 
 ## Installation
 

@@ -297,18 +297,45 @@ The `.github/workflows/deploy.yml` orchestrates the deployment:
 
 ### Service Management
 
+#### systemd Service Configuration
+
+The services are defined in `deploy/systemd/`:
+
+**liberty-beta.service** (Production):
+- Port: 3000
+- Environment: production
+- Working directory: /home/deploy/LIBERTY-SITE
+- Origin: https://beta.republicreach.org
+- Environment file: /home/deploy/.env.production
+
+**liberty-staging.service** (Staging):
+- Port: 4173
+- Environment: staging
+- Working directory: /home/deploy/LIBERTY-SITE-STAGING
+- Origin: https://staging.republicreach.org
+- Environment file: /home/deploy/.env.staging
+
+Both services include:
+- Automatic restart on failure
+- Security hardening (NoNewPrivileges, PrivateTmp)
+- Journal logging with service identifiers
+- NVM integration for Node.js version management
+
+#### Service Commands
+
 ```bash
-# systemd services (user-level)
-systemctl --user status liberty-beta      # Production (port 3000)
-systemctl --user status liberty-staging   # Staging (port 4173)
-systemctl --user status martin            # Tile server (port 3100)
+# Service management (user-level)
+systemctl --user status liberty-beta      # Production status
+systemctl --user status liberty-staging   # Staging status
+systemctl --user restart liberty-beta     # Restart production
+systemctl --user restart liberty-staging  # Restart staging
+
+# View logs
+journalctl --user -u liberty-beta -f     # Production logs
+journalctl --user -u liberty-staging -f  # Staging logs
 
 # ETL orchestration
 cd /home/deploy/etl && python -m orchestrator
-
-# View logs
-journalctl --user -u liberty-beta -f
-journalctl --user -u liberty-staging -f
 ```
 
 ### nginx Configuration
@@ -362,23 +389,44 @@ npm run build
 
 ### Deployment Tasks
 
-#### Manual Deployment to Staging
+#### Deployment Readiness Check
+```bash
+# Run comprehensive environment validation
+cd /home/deploy/RepublicReach/deploy/scripts
+./check-env.sh
+```
+
+This script validates:
+- Directory structure (production, staging, backups)
+- Environment files and DATABASE_URL configuration
+- Database connectivity for both environments
+- systemd service installation and status
+- SSH key configuration
+- GitHub secrets (if gh CLI is available)
+- Node.js installation
+
+#### Database Synchronization
+```bash
+# Safe sync from production to staging
+cd /home/deploy/RepublicReach/deploy/scripts
+./db-sync-safe.sh production staging
+```
+
+Features:
+- Automatic backup of target database before sync
+- Uses `pg_dump --clean` for safe object replacement
+- Excludes ETL tracking tables when syncing to staging
+- Removes superuser-only commands (EXTENSION operations)
+- Maintains last 5 backups automatically
+- No manual DROP DATABASE required
+
+#### Manual Deployment
 ```bash
 cd /home/deploy/LIBERTY-SITE-STAGING
 git pull origin main
 npm ci
 npm run build
 systemctl --user restart liberty-staging
-```
-
-#### Database Sync (Production → Staging)
-```bash
-# Dump production database
-pg_dump gov > /tmp/gov_prod.sql
-
-# Restore to staging
-dropdb gov_staging && createdb gov_staging
-psql gov_staging < /tmp/gov_prod.sql
 ```
 
 #### Rollback Procedure
